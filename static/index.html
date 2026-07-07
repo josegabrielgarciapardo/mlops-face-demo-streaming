@@ -226,17 +226,8 @@
         diagnosis = "MULTIPLE_FACES";
       } else if (notFoundRatio >= FACE_NOT_FOUND_THRESHOLD) {
         diagnosis = "FACE_NOT_FOUND";
-      } else if (single === total) {
-        diagnosis = "OK";
       } else {
-        // Especificación estricta: OK solamente si todos los frames tienen una cara.
-        if (multiple > 0) {
-          diagnosis = "MULTIPLE_FACES";
-        } else if (notFound > 0) {
-          diagnosis = "FACE_NOT_FOUND";
-        } else {
-          diagnosis = "OK";
-        }
+        diagnosis = "OK";
       }
 
       return {
@@ -284,6 +275,7 @@
       }
 
       const finalResult = computeFinalDiagnosis(faceCounts);
+      overlayCtx.clearRect(0, 0, overlay.width, overlay.height);
       renderFinalDiagnosis(finalResult);
     }
 
