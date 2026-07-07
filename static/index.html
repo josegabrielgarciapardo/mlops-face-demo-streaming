@@ -30,6 +30,17 @@
       line-height: 1.5;
     }
 
+    .notice-list {
+      line-height: 1.5;
+      padding-left: 24px;
+      margin-top: 16px;
+      margin-bottom: 20px;
+    }
+
+    .notice-list li {
+      margin-bottom: 6px;
+    }
+
     .stage {
       position: relative;
       width: 100%;
@@ -106,14 +117,13 @@
 <body>
   <h1>Live Face Detection API - YuNet</h1>
 
-  <p>
-    La cámara se abre en el navegador. Durante 5 segundos se envían frames al backend,
-    se reciben las detecciones y se pintan las bounding boxes en tiempo real.
-  </p>
-
-  <p class="small">
-    Verde: una cara. Rojo: ninguna cara o múltiples caras.
-  </p>
+  <ul class="notice-list">
+    <li>Se abrirá la cámara en el navegador bajo petición expresa.</li>
+    <li>Los frames se enviarán al backend de Render.</li>
+    <li>No se guardarán metadatos, imágenes, vídeos, embeddings, ni ningún tipo de información.</li>
+    <li>No se hará reconocimiento facial, solo conteo de caras en cada frame.</li>
+    <li>No se registran payloads ni imágenes en logs.</li>
+  </ul>
 
   <div class="stage" id="stage">
     <video id="video" autoplay playsinline muted></video>
@@ -125,6 +135,7 @@
   <br />
 
   <button id="startBtn">Iniciar demo en vivo</button>
+  <button id="stopBtn" disabled>Detener demo</button>
 
   <h2>Estado actual</h2>
   <div id="liveStatus">Esperando...</div>
@@ -144,6 +155,7 @@
     const captureCtx = captureCanvas.getContext("2d");
 
     const startBtn = document.getElementById("startBtn");
+    const stopBtn = document.getElementById("stopBtn");
     const liveStatus = document.getElementById("liveStatus");
     const finalDiagnosis = document.getElementById("finalDiagnosis");
     const stats = document.getElementById("stats");
@@ -158,6 +170,8 @@
     const MAX_INFERENCE_SIDE = 320;
 
     let stream = null;
+    let stopRequested = false;
+    let activeAbortControllers = [];
 
     async function openCamera() {
       stream = await navigator.mediaDevices.getUserMedia({
