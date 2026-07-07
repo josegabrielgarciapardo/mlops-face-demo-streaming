@@ -170,54 +170,28 @@
       return await response.json();
     }
 
-    function drawDetections(detections, status) {
-        overlayCtx.clearRect(0, 0, overlay.width, overlay.height);
+    function drawDetections(detections) {
+      overlayCtx.clearRect(0, 0, overlay.width, overlay.height);
 
-        const scaleX = overlay.width / captureCanvas.width;
-        const scaleY = overlay.height / captureCanvas.height;
+      const scaleX = overlay.width / captureCanvas.width;
+      const scaleY = overlay.height / captureCanvas.height;
 
-        let boxColor;
-        let labelText;
+      overlayCtx.lineWidth = 3;
+      overlayCtx.font = "18px system-ui";
 
-        if (status === "SINGLE_FACE") {
-            boxColor = "#00ff00";
-            labelText = "SINGLE_FACE";
-        } else if (status === "MULTIPLE_FACES") {
-            boxColor = "#ff0000";
-            labelText = "MULTIPLE_FACES";
-        } else {
-            boxColor = "#ff0000";
-            labelText = "FACE_NOT_FOUND";
-        }
+      detections.forEach(det => {
+        const x = det.x * scaleX;
+        const y = det.y * scaleY;
+        const w = det.w * scaleX;
+        const h = det.h * scaleY;
 
-        overlayCtx.lineWidth = 4;
-        overlayCtx.strokeStyle = boxColor;
-        overlayCtx.fillStyle = boxColor;
-        overlayCtx.font = "bold 22px system-ui";
+        overlayCtx.strokeRect(x, y, w, h);
 
-        detections.forEach(det => {
-            const x = det.x * scaleX;
-            const y = det.y * scaleY;
-            const w = det.w * scaleX;
-            const h = det.h * scaleY;
+        const label = `${det.score.toFixed(2)}`;
+        overlayCtx.fillText(label, x, Math.max(20, y - 6));
+      });
+    }
 
-            overlayCtx.strokeRect(x, y, w, h);
-
-            const score = det.score.toFixed(2);
-            const text = `${labelText} ${score}`;
-
-            const textX = x;
-            const textY = Math.max(24, y - 8);
-
-            overlayCtx.fillText(text, textX, textY);
-        });
-
-        if (detections.length === 0) {
-            overlayCtx.fillStyle = "#ff0000";
-            overlayCtx.font = "bold 28px system-ui";
-            overlayCtx.fillText("FACE_NOT_FOUND", 24, 40);
-        }
-        }
     function updateLiveStatus(result, frameIdx, totalFrames) {
       const faces = result.faces;
 
