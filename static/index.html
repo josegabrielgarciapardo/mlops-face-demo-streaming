@@ -2,26 +2,50 @@
 <html lang="es">
 <head>
   <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
   <title>Live Face Detection - YuNet</title>
 
   <style>
     body {
-      font-family: system-ui, sans-serif;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       max-width: 900px;
-      margin: 40px auto;
+      margin: 32px auto;
       padding: 0 16px;
+      background: #fafafa;
+      color: #111;
+    }
+
+    h1 {
+      font-size: 28px;
+      margin-bottom: 8px;
+    }
+
+    h2 {
+      margin-top: 28px;
+      margin-bottom: 8px;
+    }
+
+    p {
+      line-height: 1.5;
     }
 
     .stage {
       position: relative;
-      width: 640px;
-      max-width: 100%;
+      width: 100%;
+      max-width: 640px;
+      margin-top: 20px;
+      background: #111;
+      border-radius: 12px;
+      overflow: hidden;
     }
 
-    video, canvas {
-      width: 640px;
-      max-width: 100%;
-      border-radius: 12px;
+    video {
+      display: block;
+      width: 100%;
+      height: auto;
+      background: #111;
+      transform: scaleX(-1);
     }
 
     #overlay {
@@ -29,6 +53,9 @@
       left: 0;
       top: 0;
       pointer-events: none;
+      width: 100%;
+      height: 100%;
+      transform: scaleX(-1);
     }
 
     #captureCanvas {
@@ -36,27 +63,42 @@
     }
 
     button {
-      margin-top: 16px;
+      margin-top: 18px;
       padding: 12px 20px;
       font-size: 16px;
       cursor: pointer;
+      border-radius: 8px;
+      border: 1px solid #999;
+      background: white;
+    }
+
+    button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
     }
 
     .ok {
-      color: green;
-      font-weight: bold;
+      color: #008000;
+      font-weight: 700;
     }
 
     .bad {
-      color: crimson;
-      font-weight: bold;
+      color: #d0003b;
+      font-weight: 700;
     }
 
     pre {
-      background: #f4f4f4;
+      background: #f0f0f0;
       padding: 16px;
       border-radius: 8px;
       overflow-x: auto;
+      font-size: 14px;
+      max-height: 360px;
+    }
+
+    .small {
+      color: #555;
+      font-size: 14px;
     }
   </style>
 </head>
@@ -65,16 +107,20 @@
   <h1>Live Face Detection API - YuNet</h1>
 
   <p>
-    La cámara se abre en tu navegador. Durante 5 segundos se envían frames
-    al backend y se actualiza el resultado en vivo.
+    La cámara se abre en el navegador. Durante 5 segundos se envían frames al backend,
+    se reciben las detecciones y se pintan las bounding boxes en tiempo real.
   </p>
 
-  <div class="stage">
+  <p class="small">
+    Verde: una cara. Rojo: ninguna cara o múltiples caras.
+  </p>
+
+  <div class="stage" id="stage">
     <video id="video" autoplay playsinline muted></video>
-    <canvas id="overlay" width="640" height="480"></canvas>
+    <canvas id="overlay"></canvas>
   </div>
 
-  <canvas id="captureCanvas" width="320" height="240"></canvas>
+  <canvas id="captureCanvas"></canvas>
 
   <br />
 
@@ -93,6 +139,7 @@
     const video = document.getElementById("video");
     const overlay = document.getElementById("overlay");
     const overlayCtx = overlay.getContext("2d");
+
     const captureCanvas = document.getElementById("captureCanvas");
     const captureCtx = captureCanvas.getContext("2d");
 
@@ -108,14 +155,16 @@
     const FACE_NOT_FOUND_THRESHOLD = 0.10;
     const MULTIPLE_FACES_THRESHOLD = 0.10;
 
+    const MAX_INFERENCE_SIDE = 320;
+
     let stream = null;
 
     async function openCamera() {
       stream = await navigator.mediaDevices.getUserMedia({
         video: {
+          facingMode: "user",
           width: { ideal: 640 },
-          height: { ideal: 480 },
-          facingMode: "user"
+          height: { ideal: 480 }
         },
         audio: false
       });
@@ -123,7 +172,11 @@
       video.srcObject = stream;
 
       return new Promise(resolve => {
-        video.onloadedmetadata = () => resolve();
+        video.onloadedmetadata = async () => {
+          await video.play();
+          setupCanvases();
+          resolve();
+        };
       });
     }
 
@@ -134,6 +187,35 @@
 
       stream = null;
       video.srcObject = null;
+    }
+
+    function setupCanvases() {
+      const videoWidth = video.videoWidth;
+      const videoHeight = video.videoHeight;
+
+      if (!videoWidth || !videoHeight) {
+        return;
+      }
+
+      const scale = MAX_INFERENCE_SIDE / Math.max(videoWidth, videoHeight);
+
+      const inferenceWidth = Math.round(videoWidth * scale);
+      const inferenceHeight = Math.round(videoHeight * scale);
+
+      captureCanvas.width = inferenceWidth;
+      captureCanvas.height = inferenceHeight;
+
+      const rect = video.getBoundingClientRect();
+
+      overlay.width = Math.round(rect.width);
+      overlay.height = Math.round(rect.height);
+
+      overlay.style.width = `${rect.width}px`;
+      overlay.style.height = `${rect.height}px`;
+    }
+
+    function clearOverlay() {
+      overlayCtx.clearRect(0, 0, overlay.width, overlay.height);
     }
 
     function captureFrameBlob() {
@@ -170,14 +252,95 @@
       return await response.json();
     }
 
-    function drawDetections(detections) {
-      overlayCtx.clearRect(0, 0, overlay.width, overlay.height);
+    function getVisualStyle(status) {
+      if (status === "SINGLE_FACE") {
+        return {
+          color: "#00ff00",
+          label: "SINGLE_FACE"
+        };
+      }
+
+      if (status === "MULTIPLE_FACES") {
+        return {
+          color: "#ff0000",
+          label: "MULTIPLE_FACES"
+        };
+      }
+
+      return {
+        color: "#ff0000",
+        label: "FACE_NOT_FOUND"
+      };
+    }
+
+    function drawLabel(text, x, y, color) {
+      overlayCtx.font = "bold 20px system-ui";
+      overlayCtx.textBaseline = "top";
+
+      const paddingX = 6;
+      const paddingY = 4;
+      const metrics = overlayCtx.measureText(text);
+      const textWidth = metrics.width;
+      const textHeight = 24;
+
+      const boxX = x;
+      const boxY = Math.max(0, y - textHeight - 8);
+
+      overlayCtx.fillStyle = color;
+      overlayCtx.fillRect(
+        boxX,
+        boxY,
+        textWidth + paddingX * 2,
+        textHeight + paddingY
+      );
+
+      overlayCtx.fillStyle = "#ffffff";
+      overlayCtx.fillText(text, boxX + paddingX, boxY + paddingY / 2);
+    }
+
+    function drawGlobalMessage(message, color) {
+      overlayCtx.font = "bold 28px system-ui";
+      overlayCtx.textBaseline = "top";
+
+      const x = 20;
+      const y = 20;
+      const paddingX = 10;
+      const paddingY = 8;
+      const metrics = overlayCtx.measureText(message);
+      const textWidth = metrics.width;
+      const textHeight = 34;
+
+      overlayCtx.fillStyle = color;
+      overlayCtx.fillRect(
+        x,
+        y,
+        textWidth + paddingX * 2,
+        textHeight + paddingY
+      );
+
+      overlayCtx.fillStyle = "#ffffff";
+      overlayCtx.fillText(message, x + paddingX, y + paddingY / 2);
+    }
+
+    function drawDetections(detections, status) {
+      setupCanvases();
+      clearOverlay();
+
+      const visual = getVisualStyle(status);
+      const color = visual.color;
+      const label = visual.label;
+
+      if (!detections || detections.length === 0) {
+        drawGlobalMessage("FACE_NOT_FOUND", "#ff0000");
+        return;
+      }
 
       const scaleX = overlay.width / captureCanvas.width;
       const scaleY = overlay.height / captureCanvas.height;
 
-      overlayCtx.lineWidth = 3;
-      overlayCtx.font = "18px system-ui";
+      overlayCtx.lineWidth = 4;
+      overlayCtx.strokeStyle = color;
+      overlayCtx.fillStyle = color;
 
       detections.forEach(det => {
         const x = det.x * scaleX;
@@ -185,17 +348,21 @@
         const w = det.w * scaleX;
         const h = det.h * scaleY;
 
+        overlayCtx.strokeStyle = color;
+        overlayCtx.lineWidth = 4;
         overlayCtx.strokeRect(x, y, w, h);
 
-        const label = `${det.score.toFixed(2)}`;
-        overlayCtx.fillText(label, x, Math.max(20, y - 6));
+        const score = Number(det.score).toFixed(2);
+        const text = `${label} ${score}`;
+
+        drawLabel(text, x, y, color);
       });
     }
 
     function updateLiveStatus(result, frameIdx, totalFrames) {
       const faces = result.faces;
 
-      let html = "";
+      let html;
 
       if (faces === 0) {
         html = `<span class="bad">FACE_NOT_FOUND</span>`;
@@ -243,15 +410,17 @@
     }
 
     function renderFinalDiagnosis(result) {
-      const diagnosis = result.diagnosis;
-
-      if (diagnosis === "OK") {
+      if (result.diagnosis === "OK") {
         finalDiagnosis.innerHTML = `<span class="ok">OK</span>`;
       } else {
-        finalDiagnosis.innerHTML = `<span class="bad">${diagnosis}</span>`;
+        finalDiagnosis.innerHTML = `<span class="bad">${result.diagnosis}</span>`;
       }
 
       stats.textContent = JSON.stringify(result, null, 2);
+    }
+
+    async function sleep(ms) {
+      return new Promise(resolve => setTimeout(resolve, ms));
     }
 
     async function runLiveDemo() {
@@ -260,22 +429,39 @@
 
       finalDiagnosis.textContent = "-";
       stats.textContent = "";
-      overlayCtx.clearRect(0, 0, overlay.width, overlay.height);
+      clearOverlay();
 
       for (let i = 0; i < totalFrames; i++) {
+        const loopStart = performance.now();
+
         const blob = await captureFrameBlob();
-        const result = await sendFrame(blob);
 
-        faceCounts.push(result.faces);
+        if (!blob) {
+          faceCounts.push(0);
+          updateLiveStatus(
+            { faces: 0, status: "FACE_NOT_FOUND", detections: [] },
+            i + 1,
+            totalFrames
+          );
+          drawDetections([], "FACE_NOT_FOUND");
+        } else {
+          const result = await sendFrame(blob);
 
-        drawDetections(result.detections);
-        updateLiveStatus(result, i + 1, totalFrames);
+          faceCounts.push(result.faces);
 
-        await new Promise(resolve => setTimeout(resolve, INTERVAL_MS));
+          drawDetections(result.detections, result.status);
+          updateLiveStatus(result, i + 1, totalFrames);
+        }
+
+        const elapsed = performance.now() - loopStart;
+        const remaining = Math.max(0, INTERVAL_MS - elapsed);
+        await sleep(remaining);
       }
 
       const finalResult = computeFinalDiagnosis(faceCounts);
-      overlayCtx.clearRect(0, 0, overlay.width, overlay.height);
+
+      clearOverlay();
+
       renderFinalDiagnosis(finalResult);
     }
 
@@ -284,6 +470,10 @@
 
       try {
         liveStatus.textContent = "Abriendo cámara...";
+        finalDiagnosis.textContent = "-";
+        stats.textContent = "";
+        clearOverlay();
+
         await openCamera();
 
         liveStatus.textContent = "Iniciando inferencia en vivo...";
@@ -291,12 +481,20 @@
 
       } catch (err) {
         console.error(err);
+
         liveStatus.innerHTML = `<span class="bad">ERROR</span>`;
         stats.textContent = String(err);
+        clearOverlay();
+
       } finally {
         stopCamera();
         startBtn.disabled = false;
       }
+    });
+
+    window.addEventListener("resize", () => {
+      setupCanvases();
+      clearOverlay();
     });
   </script>
 </body>
