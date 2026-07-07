@@ -45,7 +45,7 @@
       width: 100%;
       height: auto;
       background: #111;
-      /* transform: scaleX(-1); */
+      transform: scaleX(-1);
     }
 
     #overlay {
@@ -55,7 +55,7 @@
       pointer-events: none;
       width: 100%;
       height: 100%;
-      /* transform: scaleX(-1); */
+      transform: scaleX(-1);
     }
 
     #captureCanvas {
@@ -148,15 +148,39 @@
     const stats = document.getElementById("stats");
 
     const CAPTURE_SECONDS = 5;
-    const FPS = 30;
+
+    // 1. Bajamos FPS de 10 a 5 para reducir congestión y latencia.
+    const FPS = 5;
     const INTERVAL_MS = 1000 / FPS;
 
-    const FACE_NOT_FOUND_THRESHOLD = 0.30;
-    const MULTIPLE_FACES_THRESHOLD = 0.30;
+    const FACE_NOT_FOUND_THRESHOLD = 0.10;
+    const MULTIPLE_FACES_THRESHOLD = 0.10;
 
-    const MAX_INFERENCE_SIDE = 320;
+    // 2. Bajamos resolución máxima de inferencia de 320 a 256.
+    const MAX_INFERENCE_SIDE = 256;
+
+    /*
+      4. Descarte de respuestas antiguas.
+
+      Si llega una detección muy atrasada respecto al último frame enviado,
+      no se pinta en pantalla. Esto evita dibujar una bbox vieja sobre un
+      vídeo que ya ha avanzado.
+
+      Con FPS=5, un lag máximo de 1 frame equivale a unos 200 ms.
+    */
+    const MAX_VISUAL_FRAME_LAG = 1;
+
+    /*
+      Tiempo máximo de espera al terminar la captura para que lleguen respuestas pendientes.
+      Evita que la demo se quede bloqueada si alguna request se cuelga.
+    */
+    const FINAL_WAIT_TIMEOUT_MS = 1500;
 
     let stream = null;
+
+    let latestSentFrameId = 0;
+    let latestPaintedFrameId = 0;
+    let isRunning = false;
 
     async function openCamera() {
       stream = await navigator.mediaDevices.getUserMedia({
@@ -219,6 +243,8 @@
 
     function captureFrameBlob() {
       return new Promise(resolve => {
+        setupCanvases();
+
         captureCtx.drawImage(
           video,
           0,
@@ -235,9 +261,18 @@
       });
     }
 
-    async function sendFrame(blob) {
+    async function sendFrame(frameId, blob) {
       const formData = new FormData();
-      formData.append("frame", blob, "frame.jpg");
+
+      formData.append("frame", blob, `frame_${frameId}.jpg`);
+
+      /*
+        3. Añadimos frame_id al envío.
+
+        El backend actual puede ignorarlo sin problema. En el frontend lo usamos
+        para saber a qué frame pertenece la respuesta.
+      */
+      formData.append("frame_id", String(frameId));
 
       const response = await fetch("/api/frame", {
         method: "POST",
@@ -248,7 +283,15 @@
         throw new Error(`API error: ${response.status}`);
       }
 
-      return await response.json();
+      const result = await response.json();
+
+      /*
+        Aunque el backend no devuelva frame_id, lo reinsertamos aquí.
+        Así no tienes que modificar app.py.
+      */
+      result.frame_id = frameId;
+
+      return result;
     }
 
     function getVisualStyle(status) {
@@ -321,7 +364,38 @@
       overlayCtx.fillText(message, x + paddingX, y + paddingY / 2);
     }
 
-    function drawDetections(detections, status) {
+    function shouldPaintResult(frameId) {
+      /*
+        4. Descartamos respuestas antiguas.
+
+        Ejemplo:
+        - latestSentFrameId = 20
+        - llega respuesta del frame 16
+        - 16 < 20 - 1 → respuesta vieja → no pintar
+
+        También evitamos pintar un frame más antiguo que el último ya pintado.
+      */
+
+      const tooOldComparedToLatestSent =
+        frameId < latestSentFrameId - MAX_VISUAL_FRAME_LAG;
+
+      const olderThanAlreadyPainted =
+        frameId < latestPaintedFrameId;
+
+      if (tooOldComparedToLatestSent || olderThanAlreadyPainted) {
+        return false;
+      }
+
+      return true;
+    }
+
+    function drawDetections(detections, status, frameId) {
+      if (!shouldPaintResult(frameId)) {
+        return;
+      }
+
+      latestPaintedFrameId = frameId;
+
       setupCanvases();
       clearOverlay();
 
@@ -359,6 +433,13 @@
     }
 
     function updateLiveStatus(result, frameIdx, totalFrames) {
+      /*
+        También evitamos que un estado viejo machaque el texto actual.
+      */
+      if (!shouldPaintResult(result.frame_id)) {
+        return;
+      }
+
       const faces = result.faces;
 
       let html;
@@ -377,11 +458,26 @@
     }
 
     function computeFinalDiagnosis(faceCounts) {
-      const total = faceCounts.length;
+      const validFaceCounts = faceCounts.filter(v => Number.isInteger(v));
+      const total = validFaceCounts.length;
 
-      const notFound = faceCounts.filter(c => c === 0).length;
-      const multiple = faceCounts.filter(c => c >= 2).length;
-      const single = faceCounts.filter(c => c === 1).length;
+      if (total === 0) {
+        return {
+          diagnosis: "FACE_NOT_FOUND",
+          total_frames: 0,
+          single_face_frames: 0,
+          face_not_found_frames: 0,
+          multiple_faces_frames: 0,
+          face_not_found_ratio: 1.0,
+          multiple_faces_ratio: 0.0,
+          face_counts: [],
+          warning: "No valid frame responses were received."
+        };
+      }
+
+      const notFound = validFaceCounts.filter(c => c === 0).length;
+      const multiple = validFaceCounts.filter(c => c >= 2).length;
+      const single = validFaceCounts.filter(c => c === 1).length;
 
       const notFoundRatio = notFound / total;
       const multipleRatio = multiple / total;
@@ -404,7 +500,7 @@
         multiple_faces_frames: multiple,
         face_not_found_ratio: Number(notFoundRatio.toFixed(4)),
         multiple_faces_ratio: Number(multipleRatio.toFixed(4)),
-        face_counts: faceCounts,
+        face_counts: validFaceCounts,
       };
     }
 
@@ -422,46 +518,118 @@
       return new Promise(resolve => setTimeout(resolve, ms));
     }
 
+    async function waitWithTimeout(promises, timeoutMs) {
+      const timeoutPromise = new Promise(resolve => {
+        setTimeout(() => resolve("timeout"), timeoutMs);
+      });
+
+      await Promise.race([
+        Promise.allSettled(promises),
+        timeoutPromise
+      ]);
+    }
+
+    async function processFrame(frameId, totalFrames, faceCounts) {
+      try {
+        const blob = await captureFrameBlob();
+
+        if (!blob) {
+          faceCounts[frameId - 1] = 0;
+
+          const fallbackResult = {
+            frame_id: frameId,
+            faces: 0,
+            status: "FACE_NOT_FOUND",
+            detections: []
+          };
+
+          drawDetections([], "FACE_NOT_FOUND", frameId);
+          updateLiveStatus(fallbackResult, frameId, totalFrames);
+
+          return;
+        }
+
+        const result = await sendFrame(frameId, blob);
+
+        faceCounts[frameId - 1] = Number(result.faces);
+
+        drawDetections(result.detections, result.status, result.frame_id);
+        updateLiveStatus(result, frameId, totalFrames);
+
+      } catch (err) {
+        console.error(`Frame ${frameId} error:`, err);
+
+        faceCounts[frameId - 1] = 0;
+
+        const fallbackResult = {
+          frame_id: frameId,
+          faces: 0,
+          status: "FACE_NOT_FOUND",
+          detections: []
+        };
+
+        drawDetections([], "FACE_NOT_FOUND", frameId);
+        updateLiveStatus(fallbackResult, frameId, totalFrames);
+      }
+    }
+
     async function runLiveDemo() {
       const totalFrames = CAPTURE_SECONDS * FPS;
-      const faceCounts = [];
+      const faceCounts = new Array(totalFrames).fill(null);
+      const pendingRequests = [];
+
+      latestSentFrameId = 0;
+      latestPaintedFrameId = 0;
+      isRunning = true;
 
       finalDiagnosis.textContent = "-";
       stats.textContent = "";
       clearOverlay();
 
-      for (let i = 0; i < totalFrames; i++) {
+      /*
+        Importante:
+
+        Ya no bloqueamos cada iteración esperando la respuesta del backend.
+        Capturamos a ritmo constante, enviamos el frame y dejamos que la respuesta
+        llegue cuando pueda. Si llega tarde, se descarta visualmente.
+      */
+      for (let frameId = 1; frameId <= totalFrames; frameId++) {
         const loopStart = performance.now();
 
-        const blob = await captureFrameBlob();
+        latestSentFrameId = frameId;
 
-        if (!blob) {
-          faceCounts.push(0);
-          updateLiveStatus(
-            { faces: 0, status: "FACE_NOT_FOUND", detections: [] },
-            i + 1,
-            totalFrames
-          );
-          drawDetections([], "FACE_NOT_FOUND");
-        } else {
-          const result = await sendFrame(blob);
+        liveStatus.innerHTML = `
+          Enviando frame ${frameId}/${totalFrames}...
+        `;
 
-          faceCounts.push(result.faces);
-
-          drawDetections(result.detections, result.status);
-          updateLiveStatus(result, i + 1, totalFrames);
-        }
+        const requestPromise = processFrame(frameId, totalFrames, faceCounts);
+        pendingRequests.push(requestPromise);
 
         const elapsed = performance.now() - loopStart;
         const remaining = Math.max(0, INTERVAL_MS - elapsed);
+
         await sleep(remaining);
       }
+
+      isRunning = false;
+
+      liveStatus.textContent = "Esperando respuestas pendientes...";
+
+      /*
+        Esperamos brevemente a que lleguen respuestas pendientes.
+        Si alguna request queda colgada, no bloqueamos la demo indefinidamente.
+      */
+      await waitWithTimeout(pendingRequests, FINAL_WAIT_TIMEOUT_MS);
 
       const finalResult = computeFinalDiagnosis(faceCounts);
 
       clearOverlay();
 
       renderFinalDiagnosis(finalResult);
+
+      liveStatus.innerHTML = `
+        Proceso finalizado. Frames procesados válidos: ${finalResult.total_frames}/${totalFrames}
+      `;
     }
 
     startBtn.addEventListener("click", async () => {
