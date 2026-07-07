@@ -107,12 +107,11 @@
   <h1>Live Face Detection API - YuNet</h1>
 
   <p>
-    La cámara se abre en el navegador. Durante 5 segundos se envían frames al backend,
-    se reciben las detecciones y se pintan las bounding boxes en tiempo real.
-  </p>
-
-  <p class="small">
-    Verde: una cara. Rojo: ninguna cara o múltiples caras.
+    Se abrirá la cámara en el navegador (bajo petición expresa) y los frames se envían al backend de Render.
+    No se guardarán imágenes, vídeos, embeddings ni ningún metadato con o sin información sensible.
+    No se hace reconocimiento facial, solo conteo de caras.
+    No se registran payloads ni imágenes en logs.
+    La participación es, por supuesto, voluntaria.
   </p>
 
   <div class="stage" id="stage">
