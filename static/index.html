@@ -30,6 +30,17 @@
       line-height: 1.5;
     }
 
+    .notice-list {
+      line-height: 1.5;
+      padding-left: 24px;
+      margin-top: 16px;
+      margin-bottom: 20px;
+    }
+
+    .notice-list li {
+      margin-bottom: 6px;
+    }
+
     .stage {
       position: relative;
       width: 100%;
@@ -106,13 +117,13 @@
 <body>
   <h1>Live Face Detection API - YuNet</h1>
 
-  <p>
-    Se abrirá la cámara en el navegador (bajo petición expresa) y los frames se enviarán al backend de Render.
-    No se guardarán imágenes, vídeos, embeddings ni ningún metadato con o sin información sensible.
-    No se hace reconocimiento facial, solo conteo de caras en cada frame (verde: 1 cara, rojo: resto de escenarios).
-    No se registran payloads ni imágenes en logs.
-    La participación es, por supuesto, voluntaria.
-  </p>
+  <ul class="notice-list">
+    <li>Se abrirá la cámara en el navegador bajo petición expresa.</li>
+    <li>Los frames se enviarán al backend de Render.</li>
+    <li>No se guardarán metadatos, imágenes, vídeos, embeddings, ni ningún tipo de información.</li>
+    <li>No se hará reconocimiento facial, solo conteo de caras en cada frame.</li>
+    <li>No se registran payloads ni imágenes en logs.</li>
+  </ul>
 
   <div class="stage" id="stage">
     <video id="video" autoplay playsinline muted></video>
